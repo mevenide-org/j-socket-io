@@ -1,0 +1,23 @@
+{
+  "name": "j-socket-io-chat",
+  "version": "0.1.0",
+  "authors": [
+    "facboy <facboy@gmail.com>"
+  ],
+  "description": "j-socket-io example chat",
+  "keywords": [
+    "socket.io"
+  ],
+  "license": "MIT",
+  "private": true,
+  "ignore": [
+    "**/.*",
+    "node_modules",
+    "bower_components",
+    "test",
+    "tests"
+  ],
+  "dependencies": {
+    "socket.io-client": "~1.0.6"
+  }
+}
