@@ -1,4 +1,4 @@
-package org.facboy.engineio;
+package org.facboy.engineio.id;
 
 import java.nio.ByteBuffer;
 import java.security.SecureRandom;

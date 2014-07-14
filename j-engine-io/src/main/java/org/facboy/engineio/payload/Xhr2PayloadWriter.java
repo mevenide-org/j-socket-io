@@ -1,31 +1,42 @@
-package org.facboy.engineio;
+package org.facboy.engineio.payload;
 
-import java.io.ByteArrayOutputStream;
+import javax.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.io.OutputStream;
 
+import com.google.common.net.HttpHeaders;
+import com.google.common.net.MediaType;
 import org.facboy.engineio.protocol.BinaryPacket;
-import org.facboy.engineio.protocol.Packet;
 import org.facboy.engineio.protocol.StringPacket;
 
 /**
  * @author Christopher Ng
  */
-public class PayloadWriter {
-    public void writePayload(OutputStream out, StringPacket packet) throws IOException {
+public class Xhr2PayloadWriter implements PayloadWriter {
+    @Override
+    public void writePayload(HttpServletResponse resp, StringPacket packet) throws IOException {
+        setContentType(resp);
+        OutputStream out = resp.getOutputStream();
+
         out.write(0);  // is a string (not true binary = 0)
         writeLength(out, packet.getData().length() + 1); // the type is prepended
-        out.write(255);
-        out.write(packet.getType().getOrdinalString().getBytes("UTF-8"));
+        out.write(packet.getType().ordinalString().getBytes("UTF-8"));
         out.write(packet.getData().getBytes("UTF-8"));
     }
 
-    public void writePayload(OutputStream out, BinaryPacket packet) throws IOException {
+    @Override
+    public void writePayload(HttpServletResponse resp, BinaryPacket packet) throws IOException {
+        setContentType(resp);
+        OutputStream out = resp.getOutputStream();
+
         out.write(1); // is binary (true binary = 1)
         writeLength(out, packet.getLength() + 1); // the type is prepended
-        out.write(255);
         out.write(packet.getType().ordinal());
         out.write(packet.getData(), packet.getOffset(), packet.getLength());
+    }
+
+    private void setContentType(HttpServletResponse resp) {
+        resp.setHeader(HttpHeaders.CONTENT_TYPE, MediaType.OCTET_STREAM.toString());
     }
 
     private void writeLength(OutputStream out, int length) throws IOException {
@@ -41,5 +52,6 @@ public class PayloadWriter {
             out.write(digit);
         }
         out.write(length);
+        out.write(255);
     }
 }

@@ -17,7 +17,7 @@ public abstract class Packet {
 
         final String ordinalString = Integer.toString(ordinal());
 
-        public String getOrdinalString() {
+        public String ordinalString() {
             return ordinalString;
         }
     }

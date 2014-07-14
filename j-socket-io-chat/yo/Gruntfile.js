@@ -28,6 +28,7 @@ module.exports = function(grunt) {
                         expand: true,     // Enable dynamic expansion.
                         cwd: 'bower_components',      // Src matches are relative to this path.
                         src: [
+                            'jquery/dist/jquery.min.js',
                             'socket.io-client/socket.io.js'
                         ], // Actual pattern(s) to match.
                         dest: 'build/static/js/3p'   // Destination path prefix.
