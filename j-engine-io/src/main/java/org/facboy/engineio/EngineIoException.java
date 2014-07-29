@@ -10,12 +10,12 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 @JsonAutoDetect(getterVisibility = Visibility.NONE, isGetterVisibility = Visibility.NONE, setterVisibility = Visibility.NONE)
 public class EngineIoException extends Exception {
     private final int statusCode;
-    private final int code;
+    private final EngineIo.Error error;
 
-    public EngineIoException(int statusCode, int code, String message) {
-        super(message);
+    public EngineIoException(int statusCode, EngineIo.Error error) {
+        super(error.message());
         this.statusCode = statusCode;
-        this.code = code;
+        this.error = error;
     }
 
     public int getStatusCode() {
@@ -24,7 +24,7 @@ public class EngineIoException extends Exception {
 
     @JsonProperty
     public int getCode() {
-        return code;
+        return error.code();
     }
 
     @JsonProperty

@@ -1,15 +1,17 @@
 package org.facboy.engineio.payload;
 
-import javax.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.UnsupportedEncodingException;
 
+import javax.servlet.http.HttpServletResponse;
+
+import org.facboy.engineio.protocol.BinaryPacket;
+import org.facboy.engineio.protocol.StringPacket;
+
 import com.google.common.io.BaseEncoding;
 import com.google.common.net.HttpHeaders;
 import com.google.common.net.MediaType;
-import org.facboy.engineio.protocol.BinaryPacket;
-import org.facboy.engineio.protocol.StringPacket;
 
 /**
  * @author Christopher Ng

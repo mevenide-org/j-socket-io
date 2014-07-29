@@ -1,0 +1,34 @@
+{
+  "name": "j-engine-io",
+  "version": "0.1.0",
+  "description": "Java engine.io implementation",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "socket.io"
+  ],
+  "author": {
+    "name": "Christopher Ng",
+    "email": "facboy@gmail.com"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "bluebird": "^2.2.2",
+    "engine-io": "git://github.com/Automattic/engine.io.git#1.3.1",
+    "engine.io-client": "^1.3.1",
+    "expect.js": "^0.3.1",
+    "fibers": "^1.0.1",
+    "grunt": "^0.4.5",
+    "grunt-contrib-clean": "^0.5.0",
+    "grunt-contrib-copy": "^0.5.0",
+    "grunt-contrib-jshint": "^0.10.0",
+    "grunt-contrib-watch": "^0.6.1",
+    "grunt-mocha-test": "^0.11.0",
+    "load-grunt-tasks": "^0.6.0",
+    "s": "^0.1.1",
+    "superagent": "^0.18.2",
+    "time-grunt": "^0.4.0",
+    "ws": "^0.4.31"
+  }
+}

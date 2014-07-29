@@ -5,7 +5,6 @@ import org.eclipse.jetty.servlet.DefaultServlet;
 import org.eclipse.jetty.servlet.ServletContextHandler;
 import org.eclipse.jetty.servlet.ServletHolder;
 import org.eclipse.jetty.util.resource.Resource;
-import org.facboy.engineio.EngineIoServlet;
 
 /**
  * @author Christopher Ng
@@ -19,7 +18,7 @@ public class OneServletContext
         ServletContextHandler servletContextHandler = new ServletContextHandler(ServletContextHandler.NO_SESSIONS);
         servletContextHandler.setContextPath("/");
 
-        servletContextHandler.addServlet(new ServletHolder(new EngineIoServlet()), "/socket.io/*");
+//        servletContextHandler.addServlet(new ServletHolder(new EngineIo()), "/socket.io/*");
 
         ServletHolder defaultServletHolder = new ServletHolder(new DefaultServlet());
         Resource htmlResource = Resource.newClassPathResource("/static");
