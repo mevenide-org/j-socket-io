@@ -1,5 +1,9 @@
 package org.facboy.engineio.protocol;
 
+import java.io.IOException;
+import java.io.OutputStream;
+import java.io.Writer;
+
 /**
  * @author Christopher Ng
  */
@@ -31,4 +35,8 @@ public abstract class Packet {
     public Type getType() {
         return type;
     }
+
+    public abstract void write(OutputStream out) throws IOException;
+    
+    public abstract void write(Writer writer) throws IOException;
 }

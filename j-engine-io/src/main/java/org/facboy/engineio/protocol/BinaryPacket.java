@@ -1,5 +1,9 @@
 package org.facboy.engineio.protocol;
 
+import java.io.IOException;
+import java.io.OutputStream;
+import java.io.Writer;
+
 /**
  * @author Christopher Ng
  */
@@ -25,5 +29,16 @@ public class BinaryPacket extends Packet {
 
     public int getLength() {
         return length;
+    }
+
+    @Override
+    public void write(OutputStream out) throws IOException {
+        out.write(getType().ordinal());
+        out.write(data, offset, length);
+    }
+
+    @Override
+    public void write(Writer writer) throws IOException {
+        throw new UnsupportedOperationException();
     }
 }

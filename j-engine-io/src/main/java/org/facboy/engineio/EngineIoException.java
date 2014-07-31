@@ -1,5 +1,7 @@
 package org.facboy.engineio;
 
+import org.facboy.engineio.protocol.ProtocolError;
+
 import com.fasterxml.jackson.annotation.JsonAutoDetect;
 import com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility;
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -10,11 +12,11 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 @JsonAutoDetect(getterVisibility = Visibility.NONE, isGetterVisibility = Visibility.NONE, setterVisibility = Visibility.NONE)
 public class EngineIoException extends Exception {
     private final int statusCode;
-    private final EngineIo.Error error;
+    private final ProtocolError error;
 
-    public EngineIoException(int statusCode, EngineIo.Error error) {
+    public EngineIoException(ProtocolError error, int httpStatusCode) {
         super(error.message());
-        this.statusCode = statusCode;
+        this.statusCode = httpStatusCode;
         this.error = error;
     }
 

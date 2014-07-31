@@ -22,8 +22,7 @@ public class Xhr2PayloadWriter implements PayloadWriter {
 
         out.write(0);  // is a string (not true binary = 0)
         writeLength(out, packet.getData().length() + 1); // the type is prepended
-        out.write(packet.getType().ordinalString().getBytes("UTF-8"));
-        out.write(packet.getData().getBytes("UTF-8"));
+        packet.write(out);
     }
 
     @Override
@@ -33,8 +32,7 @@ public class Xhr2PayloadWriter implements PayloadWriter {
 
         out.write(1); // is binary (true binary = 1)
         writeLength(out, packet.getLength() + 1); // the type is prepended
-        out.write(packet.getType().ordinal());
-        out.write(packet.getData(), packet.getOffset(), packet.getLength());
+        packet.write(out);
     }
 
     private void setContentType(HttpServletResponse resp) {

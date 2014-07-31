@@ -8,33 +8,46 @@ import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
-import org.facboy.engineio.EngineIoEventListener.ConnectionEvent;
+import org.facboy.engineio.EngineIo.Response;
+import org.facboy.engineio.payload.Base64PayloadWriter;
 import org.facboy.engineio.payload.PayloadWriter;
+import org.facboy.engineio.payload.Xhr2PayloadWriter;
 import org.facboy.engineio.protocol.Packet.Type;
+import org.facboy.engineio.protocol.Parameter;
 import org.facboy.engineio.protocol.StringPacket;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Objects;
-import com.google.common.base.Strings;
-import com.google.common.net.HttpHeaders;
-import com.google.common.net.MediaType;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
+import com.google.inject.name.Named;
 
 /**
+ * This implements the polling transport.
+ *
  * @author Christopher Ng
  */
 @Singleton
 public class EngineIoServlet extends HttpServlet {
+    public static final String DEFAULT_COOKIE = "io";
+
+    private final PayloadWriter xhr2PayloadWriter = new Xhr2PayloadWriter();
+    private final PayloadWriter base64PayloadWriter = new Base64PayloadWriter();
+
     private final EngineIo engineIo;
+    private final ObjectMapper objectMapper;
+
+    private String cookie = DEFAULT_COOKIE;
 
     @Inject
-    public EngineIoServlet(EngineIo engineIo) {
+    public EngineIoServlet(EngineIo engineIo, ObjectMapper objectMapper) {
         this.engineIo = engineIo;
+        this.objectMapper = objectMapper;
     }
 
     @Override
     protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
-        engineIo.handleGet(req, resp);
+        new GetHandler(req, resp).handle();
     }
 
     class GetHandler {
@@ -45,7 +58,7 @@ public class EngineIoServlet extends HttpServlet {
         GetHandler(HttpServletRequest req, HttpServletResponse resp) {
             this.req = req;
             this.resp = resp;
-            if (Objects.equal(req.getParameter(BASE64), "1")) {
+            if (Objects.equal(req.getParameter(Parameter.BASE64), "1")) {
                 payloadWriter = base64PayloadWriter;
             } else {
                 payloadWriter = xhr2PayloadWriter;
@@ -53,79 +66,44 @@ public class EngineIoServlet extends HttpServlet {
         }
 
         public void handle() throws IOException {
-            try {
-                checkProtocol();
+            String transport = req.getParameter(Parameter.TRANSPORT);
 
-                setOriginHeaders();
+            String sid = req.getParameter(Parameter.SESSION_ID);
+            engineIo.onRequest(transport, sid, new Response() {
+                @Override
+                public void sendHandshake(EngineIo.HandshakeResponse handshakeResponse) {
+                    if (cookie != null) {
+                        resp.addCookie(new Cookie(cookie, handshakeResponse.sid));
+                    }
 
-                String transport = req.getParameter(TRANSPORT);
-                if (!transports.contains(transport)) {
-                    throw new EngineIoException(HttpServletResponse.SC_BAD_REQUEST, Error.UNKNOWN_TRANSPORT);
+                    try {
+                        payloadWriter.writePayload(resp,
+                                new StringPacket(Type.OPEN, objectMapper.writeValueAsString(handshakeResponse)));
+                    } catch (IOException e) {
+                        throw new RuntimeException(e);
+                    }
                 }
 
-                String sid = req.getParameter(SESSION_ID);
-                if (Strings.isNullOrEmpty(sid)) {
-                    sendHandshake(transport);
-                } else {
-                    Boolean hasSession = sessionRegistry.getSession(sid);
-                    if (hasSession == null) {
-                        throw new EngineIoException(HttpServletResponse.SC_BAD_REQUEST, Error.UNKNOWN_SID);
-                    }
+                @Override
+                public void startAsync() {
                     req.startAsync();
                 }
-            } catch (EngineIoException e) {
-                handleError(e);
-            }
+            });
         }
+    }
 
-        private void setOriginHeaders() {
-            String originHeader = req.getHeader(HttpHeaders.ORIGIN);
-            if (Strings.isNullOrEmpty(originHeader)) {
-                resp.setHeader(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, "*");
-            } else {
-                resp.setHeader(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, originHeader);
-                resp.setHeader(HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS, "true");
-            }
-        }
+    @Inject(optional = true)
+    public void setCookie(@Named("engine.io.cookie") String cookie) {
+        this.cookie = cookie.trim();
+    }
 
-        private void checkProtocol() throws EngineIoException {
-            String protocol = req.getParameter(PROTOCOL);
-            if (!Objects.equal(protocol, "2") && !Objects.equal(protocol, "3")) {
-                logger.warn("Unknown protocol: {}", protocol);
-            }
-        }
-
-        private void sendHandshake(String transport) throws IOException {
-            HandshakeResponse handshakeResponse = new HandshakeResponse();
-            handshakeResponse.sid = idGenerator.generateId();
-            handshakeResponse.upgrades = transports;
-            handshakeResponse.pingInterval = pingInterval;
-            handshakeResponse.pingTimeout = pingTimeout;
-
-            // register session
-            sessionRegistry.registerSession(handshakeResponse.sid);
-
-            if (cookie != null) {
-                resp.addCookie(new Cookie(cookie, handshakeResponse.sid));
-            }
-
-            payloadWriter.writePayload(resp,
-                    new StringPacket(Type.OPEN, objectMapper.writeValueAsString(handshakeResponse)));
-
-            for (EngineIoEventListener eventListener : eventListeners) {
-                try {
-                    eventListener.onConnection(new ConnectionEvent(handshakeResponse.sid, Transport.valueOf(transport.toUpperCase())));
-                } catch (Exception e) {
-                    logger.error("Error handling connection event:", e);
-                }
-            }
-        }
-
-        private void handleError(EngineIoException engineIoException) throws IOException {
-            resp.setStatus(engineIoException.getStatusCode());
-            resp.setHeader(HttpHeaders.CONTENT_TYPE, MediaType.JSON_UTF_8.toString());
-            objectMapper.writeValue(resp.getOutputStream(), engineIoException);
-            resp.getOutputStream().flush();
+    @Inject(optional = true)
+    public void setCookieEnabled(@Named("engine.io.cookieEnabled") boolean cookieEnabled) {
+        // this is deliberate, we are using this as a sentinel value
+        if (cookieEnabled) {
+            this.cookie = DEFAULT_COOKIE;
+        } else {
+            this.cookie = null;
         }
     }
 }

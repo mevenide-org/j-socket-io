@@ -37,7 +37,8 @@ import com.google.inject.Singleton;
 public class EngineIoTestManager extends HttpServlet {
     private static final Logger logger = LoggerFactory.getLogger(EngineIoTestManager.class);
 
-    private static final String EVENT_NUMBER = "engine.io.lastConnectionEventNum";
+    private static final String CONX_EVENT_NUMBER = "engine.io.lastConnectionEventNum";
+    private static final String MESG_EVENT_NUMBER = "engine.io.lastMessageEventNum";
 
     private final SessionRegistry sessionRegistry;
     private final TestServerConfigurer testServerConfigurer;
@@ -62,7 +63,7 @@ public class EngineIoTestManager extends HttpServlet {
                     try {
                         AsyncContext asyncContext = i.next();
                         HttpServletResponse resp = (HttpServletResponse) asyncContext.getResponse();
-                        int nextNum = (Integer) asyncContext.getRequest().getAttribute(EVENT_NUMBER);
+                        int nextNum = (Integer) asyncContext.getRequest().getAttribute(CONX_EVENT_NUMBER);
                         if (connectionEvents.size() > nextNum) {
                             writeConnectionEvent(resp, connectionEvents.get(nextNum));
                             i.remove();
@@ -71,6 +72,11 @@ public class EngineIoTestManager extends HttpServlet {
                         logger.error("Error handling connection event:", e);
                     }
                 }
+            }
+
+            @Override
+            public void onMessage(MessageEvent event) {
+
             }
         });
     }
@@ -82,18 +88,20 @@ public class EngineIoTestManager extends HttpServlet {
             objectMapper.writeValue(resp.getOutputStream(), sessionRegistry.getSessions());
         } else if (Objects.equal(req.getPathInfo(), "/events/connection")) {
             handleConnectionEventListener(req, resp);
+        } else if (Objects.equal(req.getPathInfo(), "/events/sockets/")) {
+            handleConnectionEventListener(req, resp);
         } else {
             resp.sendError(HttpServletResponse.SC_NOT_FOUND);
         }
     }
 
     private void handleConnectionEventListener(HttpServletRequest req, HttpServletResponse resp) throws IOException {
-        int nextNum = getNumber(req.getHeader(EVENT_NUMBER)) + 1;
+        int nextNum = getNumber(req.getHeader(CONX_EVENT_NUMBER)) + 1;
 
         if (connectionEvents.size() > nextNum) {
             writeConnectionEvent(resp, connectionEvents.get(nextNum));
         } else {
-            req.setAttribute(EVENT_NUMBER, nextNum);
+            req.setAttribute(CONX_EVENT_NUMBER, nextNum);
             AsyncContext asyncContext = req.startAsync();
             asyncContexts.add(asyncContext);
         }

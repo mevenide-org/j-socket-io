@@ -2,38 +2,27 @@ package org.facboy.engineio;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 
-import java.io.IOException;
 import java.util.Collection;
 import java.util.EnumSet;
 import java.util.Set;
 
 import javax.annotation.Nonnull;
-import javax.annotation.Nullable;
-import javax.servlet.ServletException;
-import javax.servlet.http.Cookie;
-import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
 import org.facboy.engineio.EngineIoEventListener.ConnectionEvent;
 import org.facboy.engineio.id.IdGenerator;
 import org.facboy.engineio.id.SessionRegistry;
-import org.facboy.engineio.payload.Base64PayloadWriter;
-import org.facboy.engineio.payload.PayloadWriter;
-import org.facboy.engineio.payload.Xhr2PayloadWriter;
-import org.facboy.engineio.protocol.Packet.Type;
-import org.facboy.engineio.protocol.StringPacket;
+import org.facboy.engineio.protocol.ProtocolError;
+import org.facboy.engineio.protocol.Transport;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.common.base.Function;
+import com.google.common.base.Functions;
 import com.google.common.base.Objects;
 import com.google.common.base.Strings;
 import com.google.common.collect.Collections2;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Sets;
-import com.google.common.net.HttpHeaders;
-import com.google.common.net.MediaType;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import com.google.inject.name.Named;
@@ -45,55 +34,13 @@ import com.google.inject.name.Named;
 public class EngineIo {
     private static final Logger logger = LoggerFactory.getLogger(EngineIo.class);
 
-    public static final String PROTOCOL = "EIO";
-    public static final String TRANSPORT = "transport";
-    public static final String SESSION_ID = "sid";
-    public static final String BASE64 = "b64";
-
-    public static final String DEFAULT_COOKIE = "io";
     public static final int DEFAULT_PING_INTERVAL = 25000;
     public static final int DEFAULT_PING_TIMEOUT = 60000;
 
     private static final Set<String> DEFAULT_TRANSPORTS = ImmutableSet.copyOf(Collections2.transform(
-            EnumSet.allOf(Transport.class), new Function<Transport, String>() {
-                @Nullable
-                @Override
-                public String apply(@Nullable Transport input) {
-                    return input.name().toLowerCase();
-                }
-            }));
-
-    public enum Error {
-        UNKNOWN_TRANSPORT("Transport unknown"),
-        UNKNOWN_SID("Session ID unknown"),
-        BAD_HANDSHAKE_METHOD("Bad handshake method"),
-        BAD_REQUEST("Bad request");
-
-        private final String message;
-
-        Error(String message) {
-            this.message = message;
-        }
-
-        public int code() {
-            return ordinal();
-        }
-
-        public String message() {
-            return message;
-        }
-    }
-
-    public enum Transport {
-        POLLING,
-        WEBSOCKET
-    }
-
-    private final PayloadWriter xhr2PayloadWriter = new Xhr2PayloadWriter();
-    private final PayloadWriter base64PayloadWriter = new Base64PayloadWriter();
+            EnumSet.allOf(Transport.class), Functions.toStringFunction()));
 
     private final IdGenerator idGenerator;
-    private final ObjectMapper objectMapper;
     private final SessionRegistry sessionRegistry;
     private final Set<EngineIoEventListener> eventListeners = Sets.newCopyOnWriteArraySet();
 
@@ -101,98 +48,82 @@ public class EngineIo {
     private int pingTimeout = DEFAULT_PING_TIMEOUT;
     private Set<String> transports = DEFAULT_TRANSPORTS;
 
-    private String cookie = DEFAULT_COOKIE;
-
     @Inject
-    public EngineIo(IdGenerator idGenerator, ObjectMapper objectMapper,
-            SessionRegistry sessionRegistry) {
+    public EngineIo(IdGenerator idGenerator, SessionRegistry sessionRegistry) {
         this.idGenerator = idGenerator;
-        this.objectMapper = objectMapper;
         this.sessionRegistry = sessionRegistry;
     }
 
-    public void handleGet(EngineIoRequest req, EngineIoResponse resp) throws ServletException, IOException {
-        new GetHandler(req, resp).handle();
+    public void checkRequest(String protocol, String transport, String sid) throws EngineIoException {
+        checkProtocol(protocol);
+        checkTransport(transport);
+
+        if (sid != null) {
+            Boolean hasSession = sessionRegistry.getSession(sid);
+            if (hasSession == null) {
+                throw new EngineIoException(ProtocolError.UNKNOWN_SID, HttpServletResponse.SC_BAD_REQUEST);
+            }
+        }
     }
 
-    class GetHandler {
-        private final EngineIoRequest req;
-        private final EngineIoResponse resp;
-        private final PayloadWriter payloadWriter;
-
-        GetHandler(EngineIoRequest req, EngineIoResponse resp) {
-            this.req = req;
-            this.resp = resp;
-            if (Objects.equal(req.getParameter(BASE64), "1")) {
-                payloadWriter = base64PayloadWriter;
-            } else {
-                payloadWriter = xhr2PayloadWriter;
-            }
+    private void checkProtocol(String protocol) throws EngineIoException {
+        if (!Objects.equal(protocol, "2") && !Objects.equal(protocol, "3")) {
+            logger.warn("Unknown protocol: {}", protocol);
         }
+    }
 
-        public void handle() throws IOException {
+    private void checkTransport(String transport) throws EngineIoException {
+        if (!transports.contains(transport)) {
+            throw new EngineIoException(ProtocolError.UNKNOWN_TRANSPORT, HttpServletResponse.SC_BAD_REQUEST);
+        }
+        try {
+            Transport.valueOf(transport);
+        } catch (IllegalArgumentException e) {
+            throw new EngineIoException(ProtocolError.UNKNOWN_TRANSPORT, HttpServletResponse.SC_BAD_REQUEST);
+        }
+    }
+
+    public void onRequest(String transport, String sid, Response resp) {
+        if (Strings.isNullOrEmpty(sid)) {
+            sendHandshake(resp, transport);
+        } else {
+            Boolean hasSession = sessionRegistry.getSession(sid);
+            if (hasSession == null) {
+                throw new RuntimeException("Unknown sid received: " + sid);
+            }
+            resp.startAsync();
+        }
+    }
+
+    private void sendHandshake(Response resp, String transport) {
+        Transport transportObj = Transport.valueOf(transport);
+
+        HandshakeResponse handshakeResponse = new HandshakeResponse();
+        handshakeResponse.sid = idGenerator.generateId();
+        handshakeResponse.upgrades = ImmutableSet.copyOf(Sets.intersection(transports, transportObj.getUpgrades()));
+        handshakeResponse.pingInterval = pingInterval;
+        handshakeResponse.pingTimeout = pingTimeout;
+
+        sessionRegistry.registerSession(handshakeResponse.sid);
+
+        resp.sendHandshake(handshakeResponse);
+
+        for (EngineIoEventListener eventListener : eventListeners) {
             try {
-                checkProtocol();
-
-                String transport = req.getParameter(TRANSPORT);
-                if (!transports.contains(transport)) {
-                    throw new EngineIoException(HttpServletResponse.SC_BAD_REQUEST, Error.UNKNOWN_TRANSPORT);
-                }
-
-                String sid = req.getParameter(SESSION_ID);
-                if (Strings.isNullOrEmpty(sid)) {
-                    sendHandshake(transport);
-                } else {
-                    Boolean hasSession = sessionRegistry.getSession(sid);
-                    if (hasSession == null) {
-                        throw new EngineIoException(HttpServletResponse.SC_BAD_REQUEST, Error.UNKNOWN_SID);
-                    }
-                    req.startAsync();
-                }
-            } catch (EngineIoException e) {
-                handleError(e);
+                eventListener.onConnection(new ConnectionEvent(handshakeResponse.sid, transportObj));
+            } catch (Exception e) {
+                logger.error("Error handling connection event:", e);
             }
         }
+    }
 
-        private void checkProtocol() throws EngineIoException {
-            String protocol = req.getParameter(PROTOCOL);
-            if (!Objects.equal(protocol, "2") && !Objects.equal(protocol, "3")) {
-                logger.warn("Unknown protocol: {}", protocol);
-            }
-        }
+    public interface Response {
+        void sendHandshake(HandshakeResponse handshakeResponse);
 
-        private void sendHandshake(String transport) throws IOException {
-            HandshakeResponse handshakeResponse = new HandshakeResponse();
-            handshakeResponse.sid = idGenerator.generateId();
-            handshakeResponse.upgrades = transports;
-            handshakeResponse.pingInterval = pingInterval;
-            handshakeResponse.pingTimeout = pingTimeout;
-
-            // register session
-            sessionRegistry.registerSession(handshakeResponse.sid);
-
-            if (cookie != null) {
-                resp.addCookie(new Cookie(cookie, handshakeResponse.sid));
-            }
-
-            payloadWriter.writePayload(resp,
-                    new StringPacket(Type.OPEN, objectMapper.writeValueAsString(handshakeResponse)));
-
-            for (EngineIoEventListener eventListener : eventListeners) {
-                try {
-                    eventListener.onConnection(new ConnectionEvent(handshakeResponse.sid, Transport.valueOf(transport.toUpperCase())));
-                } catch (Exception e) {
-                    logger.error("Error handling connection event:", e);
-                }
-            }
-        }
-
-        private void handleError(EngineIoException engineIoException) throws IOException {
-            resp.setStatus(engineIoException.getStatusCode());
-            resp.setHeader(HttpHeaders.CONTENT_TYPE, MediaType.JSON_UTF_8.toString());
-            objectMapper.writeValue(resp.getOutputStream(), engineIoException);
-            resp.getOutputStream().flush();
-        }
+        /**
+         * TODO will need an actual object
+         */
+        void startAsync();
     }
 
     public void addEventListener(@Nonnull EngineIoEventListener eventListener) {
@@ -216,21 +147,6 @@ public class EngineIo {
     @Inject(optional = true)
     public void setPingTimeout(@Named("engine.io.pingTimeout") int pingTimeout) {
         this.pingTimeout = pingTimeout;
-    }
-
-    @Inject(optional = true)
-    public void setCookie(@Named("engine.io.cookie") String cookie) {
-        this.cookie = cookie.trim();
-    }
-
-    @Inject(optional = true)
-    public void setCookieEnabled(@Named("engine.io.cookieEnabled") boolean cookieEnabled) {
-        // this is deliberate, we are using this as a sentinel value
-        if (cookieEnabled) {
-            this.cookie = DEFAULT_COOKIE;
-        } else {
-            this.cookie = null;
-        }
     }
 
     public Set<String> getTransports() {

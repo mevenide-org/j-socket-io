@@ -2,7 +2,8 @@ package org.facboy.engineio.payload;
 
 import java.io.IOException;
 
-import org.facboy.engineio.EngineIoResponse;
+import javax.servlet.http.HttpServletResponse;
+
 import org.facboy.engineio.protocol.BinaryPacket;
 import org.facboy.engineio.protocol.StringPacket;
 
@@ -10,7 +11,7 @@ import org.facboy.engineio.protocol.StringPacket;
  * @author Christopher Ng
  */
 public interface PayloadWriter {
-    void writePayload(EngineIoResponse resp, StringPacket packet) throws IOException;
+    void writePayload(HttpServletResponse resp, StringPacket packet) throws IOException;
 
-    void writePayload(EngineIoResponse resp, BinaryPacket packet) throws IOException;
+    void writePayload(HttpServletResponse resp, BinaryPacket packet) throws IOException;
 }

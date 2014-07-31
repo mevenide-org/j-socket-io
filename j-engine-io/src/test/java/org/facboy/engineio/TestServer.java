@@ -6,9 +6,12 @@ import java.util.Map;
 import javax.servlet.DispatcherType;
 import javax.websocket.DeploymentException;
 import javax.websocket.server.ServerEndpointConfig;
+import javax.websocket.server.ServerEndpointConfig.Configurator;
 
+import org.eclipse.jetty.server.Connector;
 import org.eclipse.jetty.server.Handler;
 import org.eclipse.jetty.server.Server;
+import org.eclipse.jetty.server.ServerConnector;
 import org.eclipse.jetty.server.handler.HandlerCollection;
 import org.eclipse.jetty.servlet.DefaultServlet;
 import org.eclipse.jetty.servlet.FilterHolder;
@@ -16,6 +19,9 @@ import org.eclipse.jetty.servlet.ServletContextHandler;
 import org.eclipse.jetty.servlet.ServletHolder;
 import org.eclipse.jetty.websocket.server.WebSocketUpgradeFilter;
 import org.facboy.engineio.guice.EngineIoModule;
+import org.facboy.engineio.jersey.EngineIoTestApplication;
+import org.glassfish.jersey.servlet.ServletContainer;
+import org.glassfish.jersey.servlet.ServletProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -33,9 +39,12 @@ import com.google.inject.servlet.ServletModule;
 public class TestServer {
     private static final Logger logger = LoggerFactory.getLogger(TestServer.class);
 
+    public static final String ENGINE_IO_PATH = "/engine.io";
+
     public static void main(String[] args) throws Exception {
         TestServer server = new TestServer();
         server.start();
+        server.server.join();
     }
 
     private final DefaultServlet defaultServlet = new DefaultServlet();
@@ -44,18 +53,21 @@ public class TestServer {
     private Server server;
     private HandlerCollection handlerCollection;
 
-    private TestServer() {
+    public TestServer() {
     }
 
-    private void start() throws Exception {
-        server = new Server(8081);
+    public int start() throws Exception {
+        server = new Server();
+        ServerConnector connector = new ServerConnector(server);
+        server.setConnectors(new Connector[] {connector});
 
         handlerCollection = new HandlerCollection(true);
         handlerCollection.setHandlers(new Handler[] {createServletContextHandler(ImmutableMap.<String, Object>of())});
         server.setHandler(handlerCollection);
 
         server.start();
-        server.join();
+
+        return connector.getLocalPort();
     }
 
     private ServletContextHandler createServletContextHandler(Map<String, Object> config) {
@@ -65,8 +77,7 @@ public class TestServer {
                 new ServletModule() {
                     @Override
                     protected void configureServlets() {
-                        serve("/engine.io/*").with(EngineIoServlet.class);
-                        serve("/engine.io.manage/*").with(EngineIoTestManager.class);
+                        serve(ENGINE_IO_PATH + "/*").with(EngineIoServlet.class);
 
                         bind(TestServerConfigurer.class).toInstance(testServerConfigurer);
 
@@ -85,15 +96,22 @@ public class TestServer {
         servletContextHandler.setResourceBase("/null");
         servletContextHandler.setContextPath("/");
 
+        servletContextHandler.setAttribute(EngineIoTestApplication.GUICE_INJECTOR, injector);
+
         FilterHolder filterHolder = new FilterHolder(injector.getInstance(EngineIoFilter.class));
         filterHolder.setAsyncSupported(true);
-        servletContextHandler.addFilter(filterHolder, "/*", EnumSet.allOf(DispatcherType.class));
+        servletContextHandler.addFilter(filterHolder, ENGINE_IO_PATH + "/*", EnumSet.allOf(DispatcherType.class));
 
-        addWebsocketFilter(servletContextHandler);
+        addWebsocketFilter(servletContextHandler, injector);
 
         filterHolder = new FilterHolder(GuiceFilter.class);
         filterHolder.setAsyncSupported(true);
         servletContextHandler.addFilter(filterHolder, "/*", EnumSet.allOf(DispatcherType.class));
+
+        ServletHolder jerseyServletHolder = new ServletHolder(new ServletContainer());
+        jerseyServletHolder.setInitParameter(ServletProperties.JAXRS_APPLICATION_CLASS, EngineIoTestApplication.class.getCanonicalName());
+        jerseyServletHolder.setAsyncSupported(true);
+        servletContextHandler.addServlet(jerseyServletHolder, "/engine.io.manage/*");
 
         ServletHolder defaultServletHolder = new ServletHolder(defaultServlet);
         servletContextHandler.addServlet(defaultServletHolder, "/");
@@ -105,11 +123,10 @@ public class TestServer {
             }
         });
 
-
         return servletContextHandler;
     }
 
-    private void addWebsocketFilter(ServletContextHandler context) {
+    private void addWebsocketFilter(ServletContextHandler context, final Injector injector) {
         // Create Filter
         WebSocketUpgradeFilter filter = WebSocketUpgradeFilter.configureContext(context);
 
@@ -127,9 +144,22 @@ public class TestServer {
         context.setAttribute(javax.websocket.server.ServerContainer.class.getName(), jettyContainer);
 
         try {
-            jettyContainer.addEndpoint(ServerEndpointConfig.Builder.create(EngineIoEndpoint.class, "/engine.io/").build());
+            jettyContainer.addEndpoint(ServerEndpointConfig.Builder.create(EngineIoEndpoint.class, ENGINE_IO_PATH + "/")
+                    .configurator(new Configurator() {
+                        @Override
+                        public <T> T getEndpointInstance(Class<T> endpointClass) throws InstantiationException {
+                            return injector.getInstance(endpointClass);
+                        }
+                    })
+                    .build());
         } catch (DeploymentException e) {
-            throw new RuntimeException(e);  //To change body of catch statement use File | Settings | File Templates.
+            throw new RuntimeException(e);
+        }
+    }
+
+    public void stop() throws Exception {
+        if (server != null) {
+            server.stop();
         }
     }
 

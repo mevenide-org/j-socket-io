@@ -1,22 +1,36 @@
+'use strict';
 
 /**
  * Module dependencies.
  */
 
-var child_process = require('child_process'),
+var Promise = require('bluebird'),
+    _ = require('lodash'),
+    debug = require('debug')('java-common'),
+    eio = require('./java-engine.io.js'),
+    fs = require('fs'),
+    java = require('java'),
     path = require('path'),
-    Fiber = require('fibers'),
-    Future = require('fibers/future'),
-    request = require('superagent'),
-    eio = require('./java-engine.io.js');
+    request = require('superagent');
 
-/**
- * Listen shortcut that fires a callback on an epheemal port.
- */
+java.classpath.push('../target/classes');
+java.classpath.push('../target/test-classes');
+
+// add the maven classpath. not very efficient, but meh
+var classpathList = fs.readFileSync('classpath.list', {encoding: 'utf8'});
+_.forEach(classpathList.split(/\r?\n/), function(file) {
+    if (file) {
+        debug('adding ' + file + ' to classpath');
+        java.classpath.push(file);
+    }
+});
 
 var port = 8081,
     currentEngine;
 
+/**
+ * Listen shortcut that fires a callback on an epheemal port.
+ */
 exports.listen = function (opts, fn) {
     if ('function' == typeof opts) {
         fn = opts;
@@ -34,26 +48,36 @@ exports.listen = function (opts, fn) {
 //
 //    return e;
 
-    request.post('http://localhost:' + port + '/engine.io.manage/config')
-        .send(opts)
-        .end(function(err, res) {
-            err = getResponseError(err, res);
+    var testServer = java.newInstanceSync('org.facboy.engineio.TestServer'),
+        port = testServer.start(function(err, port) {
             if (err) {
                 throw err;
-            } else {
-                var that = this;
-                updateClients(function(err, res) {
-                    if (err) {
-                        throw err;
-                    }
-                    fn.call(that, port);
-                });
             }
-            // need to use fibers because we need to simulate blocking calls b/c of engine properties (eg engine.clients)
-//            Fiber(function() {
-//                fn(port);
-//            }).run();
+            fn(port);
         });
+
+    afterEach(function(done) {
+        console.log('fater');
+        done();
+    });
+
+//    request.post('http://localhost:' + port + '/engine.io.manage/config')
+//        .set('Content-Type', 'application/json')
+//        .send(opts)
+//        .end(function(err, res) {
+//            err = getResponseError(err, res);
+//            if (err) {
+//                throw err;
+//            } else {
+//                var that = this;
+//                updateClients(function(err, res) {
+//                    if (err) {
+//                        throw err;
+//                    }
+//                    fn.call(that, port);
+//                });
+//            }
+//        });
 
     currentEngine = {};
     Object.defineProperty(currentEngine, 'clients', {
@@ -85,7 +109,11 @@ exports.listen = function (opts, fn) {
                 if (err) {
                     throw err;
                 } else {
-                    cb(new eio.Socket(res.body.sessionId, res.body.transport));
+                    _.forEach(res.body, function(eventWrapper) {
+                        "use strict";
+
+                        cb(new eio.Socket(eventWrapper.event.sessionId, eventWrapper.event.transport));
+                    });
                 }
             });
     };

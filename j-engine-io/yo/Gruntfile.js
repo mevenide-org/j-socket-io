@@ -1,5 +1,9 @@
+'use strict';
+
 module.exports = function(grunt) {
-    var path = require('path');
+    var _ = require('lodash'),
+        child_process = require('child_process'),
+        path = require('path');
 
     require('load-grunt-tasks')(grunt);
     require('time-grunt')(grunt);
@@ -34,7 +38,7 @@ module.exports = function(grunt) {
                             content = content
                                 .replace(/^var eio = require\('\.\.'\);$/m, 'var eio = require(\'../java-engine.io\');')
                                 .replace(/^var listen = require\('\.\/common'\)\.listen;$/m,
-                                    'var common = require(\'../common\');\n' +
+                                    'var common = require(\'../java-common\');\n' +
                                     'var listen = common.listen;\n' +
                                     'common.proxyEngineIoClientSocket(eioc);');
                         }
@@ -66,6 +70,67 @@ module.exports = function(grunt) {
         watch: {
             files: ['<%= jshint.files %>'],
             tasks: ['copy:build', 'jshint']
+        },
+        mvn: {
+            classpath: {
+                src: ['../pom.xml'],
+                dest: 'classpath.list'
+            }
+        }
+    });
+
+    /**
+     * We do this in grunt because it's a bit slow to do every-time we run the tests.
+     */
+    grunt.registerMultiTask('mvn', 'Generate classpath from pom for node-java', function() {
+        var that = this,
+            done = this.async(),
+            counter = this.files.length;
+        _.forEach(this.files, function(filePair) {
+            checkFilePair(filePair);
+            getClasspath(filePair.src, function(classpath) {
+                var classpathArray = _.filter(classpath.trim().split(path.delimiter), function(file) {
+                    return file && file.trim();
+                });
+                grunt.file.write(filePair.dest, classpathArray.join('\n'), {encoding: 'utf8'});
+                done();
+            });
+        });
+
+        function checkFilePair(filePair) {
+            if (filePair.src.length === 0) {
+                throw grunt.util.error('Could not find src file for ' + that.target);
+            }
+            if (filePair.src.length > 1) {
+                throw grunt.util.error(that.target + ' has more than one src file: ' + filePair.src);
+            }
+        }
+
+        /**
+         * Get classpath from pom.
+         *
+         * @param pom
+         * @param cb
+         */
+        function getClasspath(pom, cb) {
+            var cmd = 'mvn -f ' + pom + ' dependency:build-classpath -DincludeScope=test';
+            child_process.exec(cmd, function(err, stdout, stderr) {
+                if (err) {
+                    throw grunt.util.error('Command "' + cmd + '" failed with exit code ' + err.code + ':\n' + stderr);
+                }
+
+                var next = false,
+                    classpath = _.find(stdout.split('\n'), function(line) {
+                        if (next) {
+                            return true;
+                        } else if (/^\[INFO\] Dependencies classpath:\s*$/.test(line)) {
+                            // search for the classpath line
+                            next = true;
+                        }
+                    });
+
+                cb(classpath && classpath.trim() || '');
+            });
         }
     });
 
