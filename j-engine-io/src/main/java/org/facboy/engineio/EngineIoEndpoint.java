@@ -10,10 +10,11 @@ import javax.websocket.EndpointConfig;
 import javax.websocket.MessageHandler.Whole;
 import javax.websocket.Session;
 
-import org.facboy.engineio.EngineIo.Response;
+import org.facboy.engineio.EngineIo.HandshakeSender;
 import org.facboy.engineio.protocol.Packet.Type;
 import org.facboy.engineio.protocol.Parameter;
 import org.facboy.engineio.protocol.StringPacket;
+import org.facboy.engineio.protocol.Transport;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -42,37 +43,38 @@ public class EngineIoEndpoint extends Endpoint {
         session.addMessageHandler(new Whole<String>() {
             @Override
             public void onMessage(String message) {
-                System.currentTimeMillis();
+                // TODO implement this!
+                throw new UnsupportedOperationException();
             }
         });
 
         Map<String, List<String>> requestParams = session.getRequestParameterMap();
-        String transport = getFirstRequestParameter(requestParams, Parameter.TRANSPORT);
-        String sid = getFirstRequestParameter(requestParams, Parameter.SESSION_ID);
-        engineIo.onRequest(transport, sid, new Response() {
-            @Override
-            public void sendHandshake(EngineIo.HandshakeResponse handshakeResponse) {
-                try {
-                    final Writer sendWriter = session.getBasicRemote().getSendWriter();
-                    try {
-                        new StringPacket(Type.OPEN, objectMapper.writeValueAsString(handshakeResponse)).write(sendWriter);
-                    } finally {
-                        try {
-                            sendWriter.close();
-                        } catch (Exception e) {
-                            logger.error("Error closing sendStream:", e);
-                        }
-                    }
-                } catch (IOException e) {
-                    throw new RuntimeException(e);
-                }
-            }
 
-            @Override
-            public void startAsync() {
-                // nothing atm
-            }
-        });
+        String sid = getFirstRequestParameter(requestParams, Parameter.SESSION_ID);
+        String transport = getFirstRequestParameter(requestParams, Parameter.TRANSPORT);
+        if (sid == null) {
+            Transport transportObj = Transport.valueOf(transport);
+            engineIo.handshake(transportObj.getHandshakeSession(), new HandshakeSender() {
+                @Override
+                public void sendHandshake(EngineIo.HandshakeResponse handshakeResponse) {
+                    try {
+                        final Writer sendWriter = session.getBasicRemote().getSendWriter();
+                        try {
+                            new StringPacket(Type.OPEN,
+                                    objectMapper.writeValueAsString(handshakeResponse)).write(sendWriter);
+                        } finally {
+                            try {
+                                sendWriter.close();
+                            } catch (Exception e) {
+                                logger.error("Error closing sendStream:", e);
+                            }
+                        }
+                    } catch (IOException e) {
+                        throw new RuntimeException(e);
+                    }
+                }
+            });
+        }
     }
 
     private String getFirstRequestParameter(Map<String, List<String>> requestParameterMap, String parameter) {

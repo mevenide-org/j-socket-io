@@ -31,6 +31,7 @@
     "lodash": "^2.4.1",
     "node-java-maven": "0.0.3",
     "s": "^0.1.1",
+    "stompjs": "^2.3.3",
     "superagent": "^0.18.2",
     "time-grunt": "^0.4.0",
     "ws": "^0.4.31"

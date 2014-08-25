@@ -1,6 +1,9 @@
 package org.facboy.engineio;
 
+import static com.google.common.base.Preconditions.checkNotNull;
+
 import java.util.EnumSet;
+import java.util.List;
 import java.util.Map;
 
 import javax.servlet.DispatcherType;
@@ -9,29 +12,32 @@ import javax.websocket.server.ServerEndpointConfig;
 import javax.websocket.server.ServerEndpointConfig.Configurator;
 
 import org.eclipse.jetty.server.Connector;
-import org.eclipse.jetty.server.Handler;
 import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.server.ServerConnector;
-import org.eclipse.jetty.server.handler.HandlerCollection;
 import org.eclipse.jetty.servlet.DefaultServlet;
 import org.eclipse.jetty.servlet.FilterHolder;
 import org.eclipse.jetty.servlet.ServletContextHandler;
 import org.eclipse.jetty.servlet.ServletHolder;
 import org.eclipse.jetty.websocket.server.WebSocketUpgradeFilter;
 import org.facboy.engineio.guice.EngineIoModule;
-import org.facboy.engineio.jersey.EngineIoTestApplication;
-import org.glassfish.jersey.servlet.ServletContainer;
-import org.glassfish.jersey.servlet.ServletProperties;
+import org.facboy.engineio.session.SessionRegistry;
+import org.facboy.engineio.jsapi.TestEngineIo;
+import org.facboy.engineio.jsapi.WebSocketConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.BeansException;
+import org.springframework.beans.factory.config.BeanFactoryPostProcessor;
+import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
+import org.springframework.web.context.ContextLoaderListener;
+import org.springframework.web.context.support.AnnotationConfigWebApplicationContext;
+import org.springframework.web.context.support.HttpRequestHandlerServlet;
 
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
-import com.google.inject.name.Names;
 import com.google.inject.servlet.GuiceFilter;
 import com.google.inject.servlet.GuiceServletContextListener;
-import com.google.inject.servlet.ServletModule;
 
 /**
  * @author Christopher Ng
@@ -42,28 +48,41 @@ public class TestServer {
     public static final String ENGINE_IO_PATH = "/engine.io";
 
     public static void main(String[] args) throws Exception {
-        TestServer server = new TestServer();
+        TestServer server = new TestServer(8081, ImmutableMap.<String, Object>of());
         server.start();
         server.server.join();
     }
 
     private final DefaultServlet defaultServlet = new DefaultServlet();
-    private final TestServerConfigurer testServerConfigurer = new DynamicTestServerConfigurer();
 
+    private final Integer port;
+    private final Map<String, Object> config;
+
+    private Injector injector;
     private Server server;
-    private HandlerCollection handlerCollection;
 
     public TestServer() {
+        this(ImmutableMap.<String, Object>of());
+    }
+
+    public TestServer(Map<String, Object> config) {
+        this(null, config);
+    }
+
+    public TestServer(Integer port, Map<String, Object> config) {
+        this.port = port;
+        this.config = config;
     }
 
     public int start() throws Exception {
         server = new Server();
         ServerConnector connector = new ServerConnector(server);
+        if (port != null) {
+            connector.setPort(port);
+        }
         server.setConnectors(new Connector[] {connector});
 
-        handlerCollection = new HandlerCollection(true);
-        handlerCollection.setHandlers(new Handler[] {createServletContextHandler(ImmutableMap.<String, Object>of())});
-        server.setHandler(handlerCollection);
+        server.setHandler(createServletContextHandler(config));
 
         server.start();
 
@@ -71,32 +90,19 @@ public class TestServer {
     }
 
     private ServletContextHandler createServletContextHandler(Map<String, Object> config) {
-        final Injector injector = Guice.createInjector(
+        injector = Guice.createInjector(
                 new EngineIoModule(),
-                new TestConfigModule(config),
-                new ServletModule() {
-                    @Override
-                    protected void configureServlets() {
-                        serve(ENGINE_IO_PATH + "/*").with(EngineIoServlet.class);
-
-                        bind(TestServerConfigurer.class).toInstance(testServerConfigurer);
-
-                        bindConstant().annotatedWith(Names.named("engine.io.wsEndpointPath")).to("/engine.io.ws");
-                    }
-                }
+                new TestConfigModule(config)
+//                new ServletModule() {
+//                    @Override
+//                    protected void configureServlets() {
+//                        serve(ENGINE_IO_PATH + "/*").with(EngineIoServlet.class);
+//                    }
+//                }
         );
 
         ServletContextHandler servletContextHandler = new ServletContextHandler(ServletContextHandler.NO_SESSIONS);
-//        webAppContext.setConfigurationClasses(ImmutableList.<String>builder()
-//                .add(WebInfConfiguration.class.getName())
-//                .add(AnnotationConfiguration.class.getName())
-//                .build());
-//        webAppContext.getMetaData().addContainerResource(Resource.newResource(new File("target/classes")));
-//        webAppContext.getMetaData().addContainerResource(Resource.newResource(new File("target/test-classes")));
-        servletContextHandler.setResourceBase("/null");
         servletContextHandler.setContextPath("/");
-
-        servletContextHandler.setAttribute(EngineIoTestApplication.GUICE_INJECTOR, injector);
 
         FilterHolder filterHolder = new FilterHolder(injector.getInstance(EngineIoFilter.class));
         filterHolder.setAsyncSupported(true);
@@ -108,11 +114,6 @@ public class TestServer {
         filterHolder.setAsyncSupported(true);
         servletContextHandler.addFilter(filterHolder, "/*", EnumSet.allOf(DispatcherType.class));
 
-        ServletHolder jerseyServletHolder = new ServletHolder(new ServletContainer());
-        jerseyServletHolder.setInitParameter(ServletProperties.JAXRS_APPLICATION_CLASS, EngineIoTestApplication.class.getCanonicalName());
-        jerseyServletHolder.setAsyncSupported(true);
-        servletContextHandler.addServlet(jerseyServletHolder, "/engine.io.manage/*");
-
         ServletHolder defaultServletHolder = new ServletHolder(defaultServlet);
         servletContextHandler.addServlet(defaultServletHolder, "/");
 
@@ -122,6 +123,8 @@ public class TestServer {
                 return injector;
             }
         });
+
+        addSpringStomp(servletContextHandler, injector);
 
         return servletContextHandler;
     }
@@ -157,27 +160,37 @@ public class TestServer {
         }
     }
 
+    private void addSpringStomp(ServletContextHandler context, final Injector injector) {
+        ServletHolder springWebsocketServletHolder = new ServletHolder("websocketRequestHandler", HttpRequestHandlerServlet.class);
+        context.addServlet(springWebsocketServletHolder, "/springws/*");
+
+        AnnotationConfigWebApplicationContext ctx = new AnnotationConfigWebApplicationContext();
+        ctx.register(WebSocketConfig.class);
+        ctx.scan("org.facboy.engineio.jsapi");
+        ctx.addBeanFactoryPostProcessor(new BeanFactoryPostProcessor() {
+            @Override
+            public void postProcessBeanFactory(ConfigurableListableBeanFactory beanFactory) throws BeansException {
+                beanFactory.registerSingleton("injector", injector);
+
+                List<Class<?>> classes =  ImmutableList.of(EngineIo.class, SessionRegistry.class);
+                for (Class<?> cls : classes) {
+                    beanFactory.registerResolvableDependency(cls, injector.getInstance(cls));
+                }
+            }
+        });
+        context.addEventListener(new ContextLoaderListener(ctx));
+    }
+
     public void stop() throws Exception {
         if (server != null) {
             server.stop();
+            server = null;
+            injector = null;
         }
     }
 
-    private class DynamicTestServerConfigurer implements TestServerConfigurer {
-        @Override
-        public void reconfigureServer(Map<String, Object> config) {
-            // TODO replacing the entire context handler each time is not perhaps the most efficient way of doing
-            // this, but it works pretty reliably.  replacing the injector is quite fiddly otherwise, you
-            // need to set the new injector in the servletcontext, then somehow make the GuiceFilter reinitialize itself
-            ServletContextHandler newServletContextHandler = createServletContextHandler(config);
-            handlerCollection.setHandlers(new Handler[] {newServletContextHandler});
-            try {
-                newServletContextHandler.start();
-            } catch (RuntimeException e) {
-                throw e;
-            } catch (Exception e) {
-                throw new RuntimeException(e);
-            }
-        }
+    public TestEngineIo getTestEngineIo() {
+        checkNotNull(injector, "injector is null");
+        return injector.getInstance(TestEngineIo.class);
     }
 }

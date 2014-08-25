@@ -2,7 +2,6 @@ package org.facboy.engineio;
 
 import java.io.IOException;
 
-import javax.annotation.Nonnull;
 import javax.servlet.Filter;
 import javax.servlet.FilterChain;
 import javax.servlet.FilterConfig;
@@ -13,33 +12,41 @@ import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
 import org.facboy.engineio.protocol.Parameter;
+import org.facboy.engineio.session.Session;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Strings;
 import com.google.common.net.HttpHeaders;
 import com.google.common.net.MediaType;
 import com.google.inject.Inject;
-import com.google.inject.name.Named;
+import com.google.inject.Singleton;
 
 /**
  * @author Christopher Ng
  */
+@Singleton
 public class EngineIoFilter implements Filter {
     private final EngineIo engineIo;
+
+    private final GetHandler getHandler;
+    private final PostHandler postHandler;
+    private final WebsocketHandler websocketHandler;
+
     private final ObjectMapper objectMapper;
-    private final String wsEndpointPath;
 
     @Inject
-    public EngineIoFilter(EngineIo engineIo, ObjectMapper objectMapper,
-            @Nonnull @Named("engine.io.wsEndpointPath") String wsEndpointPath) {
+    public EngineIoFilter(EngineIo engineIo, GetHandler getHandler, PostHandler postHandler,
+            WebsocketHandler websocketHandler,
+            ObjectMapper objectMapper) {
         this.engineIo = engineIo;
+        this.getHandler = getHandler;
+        this.postHandler = postHandler;
+        this.websocketHandler = websocketHandler;
         this.objectMapper = objectMapper;
-        this.wsEndpointPath = wsEndpointPath;
     }
 
     @Override
     public void init(FilterConfig filterConfig) throws ServletException {
-
     }
 
     @Override
@@ -56,9 +63,22 @@ public class EngineIoFilter implements Filter {
             setOriginHeaders(req, resp);
 
             try {
-                engineIo.checkRequest(protocol, transport, sid);
+                Session session = engineIo.getSession(protocol, transport, sid);
 
-                chain.doFilter(req, resp);
+                // handle http GET
+                if ("GET".equals(req.getMethod())) {
+                    if (websocketHandler.isUpgradeRequest(req)) {
+                        // let this fall through to the websocket implementation in the container (on jetty, who knows what tomcat does)
+                        // TODO will this work for tomcat?
+                        chain.doFilter(request, response);
+                    } else {
+                        getHandler.handle(session, req, resp);
+                    }
+                } else if ("POST".equals(req.getMethod())) {
+                    postHandler.handle(session, req, resp);
+                } else {
+                    resp.sendError(HttpServletResponse.SC_METHOD_NOT_ALLOWED, "Method Not Allowed");
+                }
             } catch (EngineIoException e) {
                 handleError(resp, e);
             }
@@ -81,11 +101,9 @@ public class EngineIoFilter implements Filter {
         resp.setStatus(engineIoException.getStatusCode());
         resp.setHeader(HttpHeaders.CONTENT_TYPE, MediaType.JSON_UTF_8.toString());
         objectMapper.writeValue(resp.getOutputStream(), engineIoException);
-        resp.getOutputStream().flush();
     }
 
     @Override
     public void destroy() {
-
     }
 }

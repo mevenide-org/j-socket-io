@@ -1,8 +1,8 @@
 package org.facboy.engineio.guice;
 
 import org.facboy.engineio.EngineIo;
-import org.facboy.engineio.id.Base64IdGenerator;
-import org.facboy.engineio.id.IdGenerator;
+import org.facboy.engineio.session.Base64IdGenerator;
+import org.facboy.engineio.session.IdGenerator;
 
 import com.google.inject.AbstractModule;
 

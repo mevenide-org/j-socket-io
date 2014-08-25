@@ -14,6 +14,7 @@ public abstract class Packet {
     public enum Type {
         OPEN,
         CLOSE,
+        PING,
         PONG,
         MESSAGE,
         UPGRADE,

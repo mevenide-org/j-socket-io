@@ -3,6 +3,9 @@ package org.facboy.engineio.protocol;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.Writer;
+import java.util.Arrays;
+
+import com.google.common.base.Objects;
 
 /**
  * @author Christopher Ng
@@ -40,5 +43,15 @@ public class BinaryPacket extends Packet {
     @Override
     public void write(Writer writer) throws IOException {
         throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public String toString() {
+        return Objects.toStringHelper(this)
+                .add("type", getType())
+                .add("data", Arrays.toString(data))
+                .add("offset", offset)
+                .add("length", length)
+                .toString();
     }
 }

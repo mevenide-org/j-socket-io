@@ -9,17 +9,20 @@ import java.util.Set;
 import javax.annotation.Nonnull;
 import javax.servlet.http.HttpServletResponse;
 
-import org.facboy.engineio.EngineIoEventListener.ConnectionEvent;
-import org.facboy.engineio.id.IdGenerator;
-import org.facboy.engineio.id.SessionRegistry;
+import org.facboy.engineio.event.ConnectionEvent;
+import org.facboy.engineio.event.EngineIoEventListener;
+import org.facboy.engineio.event.MessageEvent;
+import org.facboy.engineio.protocol.Packet;
 import org.facboy.engineio.protocol.ProtocolError;
 import org.facboy.engineio.protocol.Transport;
+import org.facboy.engineio.session.IdGenerator;
+import org.facboy.engineio.session.Session;
+import org.facboy.engineio.session.SessionRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.google.common.base.Functions;
 import com.google.common.base.Objects;
-import com.google.common.base.Strings;
 import com.google.common.collect.Collections2;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Sets;
@@ -42,11 +45,14 @@ public class EngineIo {
 
     private final IdGenerator idGenerator;
     private final SessionRegistry sessionRegistry;
-    private final Set<EngineIoEventListener> eventListeners = Sets.newCopyOnWriteArraySet();
+
+    private final Set<EngineIoEventListener<ConnectionEvent>> connectionEventListeners = Sets.newCopyOnWriteArraySet();
+    private final Set<EngineIoEventListener<MessageEvent>> messageEventListeners = Sets.newCopyOnWriteArraySet();
 
     private int pingInterval = DEFAULT_PING_INTERVAL;
     private int pingTimeout = DEFAULT_PING_TIMEOUT;
     private Set<String> transports = DEFAULT_TRANSPORTS;
+    private boolean allowUpgrades = true;
 
     @Inject
     public EngineIo(IdGenerator idGenerator, SessionRegistry sessionRegistry) {
@@ -54,20 +60,37 @@ public class EngineIo {
         this.sessionRegistry = sessionRegistry;
     }
 
-    public void checkRequest(String protocol, String transport, String sid) throws EngineIoException {
-        checkProtocol(protocol);
-        checkTransport(transport);
+    /**
+     * Gets an existing session, or returns a handshake session if sid is null.
+     * @param protocol
+     * @param transport
+     * @param sid
+     * @return Session if it exists
+     * @throws EngineIoException
+     */
+    public Session getSession(String protocol, String transport, String sid) throws EngineIoException {
+        Session session;
 
-        if (sid != null) {
-            Boolean hasSession = sessionRegistry.getSession(sid);
-            if (hasSession == null) {
+        checkProtocol(protocol);
+        if (sid == null) {
+            checkTransport(transport);
+            Transport transportObj = Transport.valueOf(transport);
+            session = transportObj.getHandshakeSession();
+        } else {
+            session = sessionRegistry.getSession(sid);
+            if (session == null) {
                 throw new EngineIoException(ProtocolError.UNKNOWN_SID, HttpServletResponse.SC_BAD_REQUEST);
             }
+            if (!transport.equals(session.getTransport().name())) {
+                throw new EngineIoException(ProtocolError.BAD_REQUEST, HttpServletResponse.SC_BAD_REQUEST);
+            }
         }
+
+        return session;
     }
 
     private void checkProtocol(String protocol) throws EngineIoException {
-        if (!Objects.equal(protocol, "2") && !Objects.equal(protocol, "3")) {
+        if (protocol != null && !Objects.equal(protocol, "2") && !Objects.equal(protocol, "3")) {
             logger.warn("Unknown protocol: {}", protocol);
         }
     }
@@ -83,52 +106,55 @@ public class EngineIo {
         }
     }
 
-    public void onRequest(String transport, String sid, Response resp) {
-        if (Strings.isNullOrEmpty(sid)) {
-            sendHandshake(resp, transport);
-        } else {
-            Boolean hasSession = sessionRegistry.getSession(sid);
-            if (hasSession == null) {
-                throw new RuntimeException("Unknown sid received: " + sid);
-            }
-            resp.startAsync();
-        }
-    }
-
-    private void sendHandshake(Response resp, String transport) {
-        Transport transportObj = Transport.valueOf(transport);
+    public void handshake(Session session, HandshakeSender resp) {
+        assert session.isHandshake();
+        // generate the real session
+        session = new Session(idGenerator.generateId(), session.getTransport());
 
         HandshakeResponse handshakeResponse = new HandshakeResponse();
-        handshakeResponse.sid = idGenerator.generateId();
-        handshakeResponse.upgrades = ImmutableSet.copyOf(Sets.intersection(transports, transportObj.getUpgrades()));
+        handshakeResponse.sid = session.getId();
+        handshakeResponse.upgrades = allowUpgrades ? ImmutableSet.copyOf(Sets.intersection(transports,
+                session.getTransport().getUpgrades())) : ImmutableSet.<String>of();
         handshakeResponse.pingInterval = pingInterval;
         handshakeResponse.pingTimeout = pingTimeout;
 
-        sessionRegistry.registerSession(handshakeResponse.sid);
-
         resp.sendHandshake(handshakeResponse);
 
-        for (EngineIoEventListener eventListener : eventListeners) {
+        sessionRegistry.registerSession(session);
+
+        for (EngineIoEventListener<ConnectionEvent> eventListener : connectionEventListeners) {
             try {
-                eventListener.onConnection(new ConnectionEvent(handshakeResponse.sid, transportObj));
+                eventListener.onEvent(new ConnectionEvent(handshakeResponse.sid, session.getTransport()));
             } catch (Exception e) {
                 logger.error("Error handling connection event:", e);
             }
         }
     }
 
-    public interface Response {
-        void sendHandshake(HandshakeResponse handshakeResponse);
-
-        /**
-         * TODO will need an actual object
-         */
-        void startAsync();
+    /**
+     * TODO does this belong here?
+     * @param fromSession
+     * @param packet
+     */
+    public void onMessage(Session fromSession, Packet packet) {
+        MessageEvent messageEvent = new MessageEvent(fromSession, packet);
+        for (EngineIoEventListener<MessageEvent> eventListener : messageEventListeners) {
+            eventListener.onEvent(messageEvent);
+        }
     }
 
-    public void addEventListener(@Nonnull EngineIoEventListener eventListener) {
+    public interface HandshakeSender {
+        void sendHandshake(HandshakeResponse handshakeResponse);
+    }
+
+    public void addConnectionEventListener(@Nonnull EngineIoEventListener<ConnectionEvent> eventListener) {
         checkNotNull(eventListener, "eventListener is null");
-        eventListeners.add(eventListener);
+        connectionEventListeners.add(eventListener);
+    }
+
+    public void addMessageEventListener(@Nonnull EngineIoEventListener<MessageEvent> eventListener) {
+        checkNotNull(eventListener, "eventListener is null");
+        messageEventListeners.add(eventListener);
     }
 
     public int getPingInterval() {
@@ -147,6 +173,17 @@ public class EngineIo {
     @Inject(optional = true)
     public void setPingTimeout(@Named("engine.io.pingTimeout") int pingTimeout) {
         this.pingTimeout = pingTimeout;
+    }
+
+    public boolean isAllowUpgrades() {
+        return allowUpgrades;
+    }
+
+    @Inject(optional = true)
+    public void setAllowUpgrades(@Named("engine.io.allowUpgrades") boolean allowUpgrades) {
+        // don't try to be clever and alter transports to empty here, transports is used to validate
+        // request transports too, not just for upgrades
+        this.allowUpgrades = allowUpgrades;
     }
 
     public Set<String> getTransports() {

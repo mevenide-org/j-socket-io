@@ -24,7 +24,7 @@ module.exports = function(grunt) {
                     {
                         expand: true,     // Enable dynamic expansion.
                         cwd: 'node_modules/engine.io/test',      // Src matches are relative to this path.
-                        src: ['server.js'], // Actual pattern(s) to match.
+                        src: ['server.js', 'jsonp.js'], // Actual pattern(s) to match.
                         dest: 'test/generated',   // Destination path prefix.
                         rename: function(dest, src) {
                             return path.join(dest, 'java-' + src);
@@ -39,8 +39,7 @@ module.exports = function(grunt) {
                                 .replace(/^var eio = require\('\.\.'\);$/m, 'var eio = require(\'../java-engine.io\');')
                                 .replace(/^var listen = require\('\.\/common'\)\.listen;$/m,
                                     'var common = require(\'../java-common\');\n' +
-                                    'var listen = common.listen;\n' +
-                                    'common.proxyEngineIoClientSocket(eioc);');
+                                    'var listen = common.listen;');
                         }
                         return content;
                     }

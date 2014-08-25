@@ -1,4 +1,4 @@
-package org.facboy.engineio.id;
+package org.facboy.engineio.session;
 
 /**
  * @author Christopher Ng

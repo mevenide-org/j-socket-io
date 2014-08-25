@@ -1,4 +1,4 @@
-package org.facboy.engineio.id;
+package org.facboy.engineio.session;
 
 import java.util.Set;
 import java.util.concurrent.ConcurrentMap;
@@ -12,14 +12,14 @@ import com.google.inject.Singleton;
  */
 @Singleton
 public class SessionRegistry {
-    private final ConcurrentMap<String, Boolean> sessions = Maps.newConcurrentMap();
+    private final ConcurrentMap<String, Session> sessions = Maps.newConcurrentMap();
 
-    public void registerSession(String sessionId) {
-        sessions.put(sessionId, true);
+    public void registerSession(Session session) {
+        sessions.put(session.getId(), session);
     }
 
-    public Boolean getSession(String session) {
-        return sessions.get(session);
+    public Session getSession(String sessionId) {
+        return sessions.get(sessionId);
     }
 
     public Set<String> getSessions() {
